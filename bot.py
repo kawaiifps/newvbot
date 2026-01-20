@@ -5,7 +5,7 @@ import os
 from flask import Flask
 from threading import Thread
 
-# --- SERVEUR WEB POUR RENDER ---
+# --- SERVEUR WEB ---
 app = Flask('')
 @app.route('/')
 def home(): return "Bot en ligne !"
@@ -22,15 +22,36 @@ LOG_RECRU_ID = 1462047465090973698
 RECRUT_CHANNEL_ID = 1461851553001504809
 FOUNDER_ROLE_ID = 1461848068780458237
 
-# --- VUES PERSISTANTES ---
+# --- VUES ---
 class RecruitmentView(discord.ui.View):
     def __init__(self, bot):
-        super().__init__(timeout=None) # Important pour que le bouton n'expire jamais
+        super().__init__(timeout=None) # Vital
         self.bot = bot
 
-    @discord.ui.button(label="⭐ Postuler maintenant ⭐", style=discord.ButtonStyle.success, custom_id="apply_btn_unique")
+    @discord.ui.button(label="⭐ Postuler maintenant ⭐", style=discord.ButtonStyle.success, custom_id="kawail_apply_unique")
     async def apply(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # On utilise une réponse différée pour éviter le timeout
         await interaction.response.send_modal(CandidatureModal(self.bot))
+
+class CandidatureModal(discord.ui.Modal, title="Dossier Staff Kawail_FPS"):
+    pseudo = discord.ui.TextInput(label="Pseudo & Âge", placeholder="Ex: Kawail_FPS, 17 ans")
+    motive = discord.ui.TextInput(label="Tes motivations", style=discord.TextStyle.paragraph, min_length=10)
+
+    def __init__(self, bot):
+        super().__init__()
+        self.bot = bot
+
+    async def on_submit(self, interaction: discord.Interaction):
+        log_chan = self.bot.get_channel(LOG_RECRU_ID)
+        embed = discord.Embed(title="📥 NOUVELLE CANDIDATURE", color=0xF1C40F)
+        embed.add_field(name="👤 Candidat", value=interaction.user.mention)
+        embed.add_field(name="🎮 Pseudo/Âge", value=self.pseudo.value)
+        embed.add_field(name="❤️ Motivations", value=self.motive.value)
+        
+        # On envoie dans les logs avec les boutons Accepter/Refuser
+        view = AdminView(self.bot, interaction.user.id)
+        await log_chan.send(embed=embed, view=view)
+        await interaction.response.send_message("✅ Ton dossier a été transmis au staff !", ephemeral=True)
 
 class AdminView(discord.ui.View):
     def __init__(self, bot, user_id):
@@ -38,47 +59,27 @@ class AdminView(discord.ui.View):
         self.bot = bot
         self.user_id = user_id
 
-    @discord.ui.button(label="ACCEPTER", style=discord.ButtonStyle.success, custom_id="accept_btn")
+    @discord.ui.button(label="ACCEPTER", style=discord.ButtonStyle.success, custom_id="adm_ok")
     async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not any(role.id == FOUNDER_ROLE_ID for role in interaction.user.roles):
-            return await interaction.response.send_message("❌ Seul le Fondateur peut faire ça.", ephemeral=True)
-        self.bot.stats["accept"] += 1
-        self.bot.stats["waiting"] -= 1
+            return await interaction.response.send_message("Fondateur uniquement.", ephemeral=True)
+        
         user = await self.bot.fetch_user(self.user_id)
         try: await user.send("Tu as été **accepté** sur le serveur **kawail_fps** !")
         except: pass
         await interaction.response.edit_message(content=f"✅ Admis par {interaction.user.name}", view=None)
 
-    @discord.ui.button(label="REFUSER", style=discord.ButtonStyle.danger, custom_id="refuse_btn")
+    @discord.ui.button(label="REFUSER", style=discord.ButtonStyle.danger, custom_id="adm_no")
     async def refuse(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not any(role.id == FOUNDER_ROLE_ID for role in interaction.user.roles):
-            return await interaction.response.send_message("❌ Seul le Fondateur peut faire ça.", ephemeral=True)
-        self.bot.stats["refuse"] += 1
-        self.bot.stats["waiting"] -= 1
+            return await interaction.response.send_message("Fondateur uniquement.", ephemeral=True)
+        
         user = await self.bot.fetch_user(self.user_id)
-        try: await user.send("Oh non, tu n'as pas été **accepté**, retente ta chance !")
+        try: await user.send("Oh non, tu n'as pas été **accepté**.")
         except: pass
         await interaction.response.edit_message(content=f"❌ Refusé par {interaction.user.name}", view=None)
 
-class CandidatureModal(discord.ui.Modal, title="Dossier Staff"):
-    pseudo = discord.ui.TextInput(label="Pseudo & Âge", placeholder="Ex: Kawail_FPS, 17 ans")
-    motive = discord.ui.TextInput(label="Tes motivations", style=discord.TextStyle.paragraph)
-
-    def __init__(self, bot):
-        super().__init__()
-        self.bot = bot
-
-    async def on_submit(self, interaction: discord.Interaction):
-        self.bot.stats["waiting"] += 1
-        log_chan = self.bot.get_channel(LOG_RECRU_ID)
-        embed = discord.Embed(title="📥 NOUVELLE CANDIDATURE", color=0xF1C40F)
-        embed.add_field(name="👤 Candidat", value=interaction.user.mention)
-        embed.add_field(name="🎮 Pseudo/Âge", value=self.pseudo.value)
-        embed.add_field(name="❤️ Motivations", value=self.motive.value)
-        await log_chan.send(embed=embed, view=AdminView(self.bot, interaction.user.id))
-        await interaction.response.send_message("✅ Ton dossier a été envoyé !", ephemeral=True)
-
-# --- CLASSE PRINCIPALE ---
+# --- BOT ---
 class MyBot(discord.Client):
     def __init__(self):
         intents = discord.Intents.default()
@@ -86,18 +87,20 @@ class MyBot(discord.Client):
         intents.message_content = True
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
-        self.stats = {"accept": 0, "refuse": 0, "waiting": 0}
 
     async def setup_hook(self):
-        # ICI : On dit au bot d'écouter les boutons même s'ils ont été envoyés hier
+        # CECI enregistre les boutons pour qu'ils marchent après reboot
         self.add_view(RecruitmentView(self))
+        # Important : On ne met PAS AdminView ici car elle est créée par candidature
+        
         guild = discord.Object(id=GUILD_ID)
         self.tree.copy_global_to(guild=guild)
         await self.tree.sync(guild=guild)
 
     async def on_ready(self):
         print(f"✅ Connecté : {self.user}")
-        self.update_status.start()
+        if not self.update_status.is_running():
+            self.update_status.start()
         await self.check_recruitment_post()
 
     @tasks.loop(minutes=10)
@@ -108,18 +111,25 @@ class MyBot(discord.Client):
 
     async def check_recruitment_post(self):
         channel = self.get_channel(RECRUT_CHANNEL_ID)
-        if channel:
-            async for message in channel.history(limit=5):
-                if message.author == self.user and message.embeds: return
+        if not channel: return
+        
+        # On cherche si le bot a déjà posté
+        found = False
+        async for m in channel.history(limit=10):
+            if m.author.id == self.user.id and m.embeds:
+                found = True
+                break
+        
+        if not found:
             embed = discord.Embed(title="🌟 RECRUTEMENT KAWAIL_FPS", description="Clique ci-dessous pour postuler !", color=0xFF69B4)
             await channel.send(embed=embed, view=RecruitmentView(self))
 
 bot = MyBot()
 
-@bot.tree.command(name="list", description="Stats recrutement")
-async def list_stats(interaction: discord.Interaction):
-    s = bot.stats
-    await interaction.response.send_message(f"✅:{s['accept']} | ❌:{s['refuse']} | ⏳:{s['waiting']}")
+# Commande list simple
+@bot.tree.command(name="list", description="Stats")
+async def list_cmd(interaction: discord.Interaction):
+    await interaction.response.send_message("Commande en cours de dev.")
 
 keep_alive()
 bot.run(TOKEN)
