@@ -5,7 +5,6 @@ import json
 from flask import Flask, request
 from threading import Thread
 
-# --- SERVEUR WEB (KEEP ALIVE + WEBHOOK GITHUB) ---
 app = Flask('')
 
 @app.route('/')
@@ -13,18 +12,23 @@ def home(): return "Bot Kawail_FPS en ligne !"
 
 @app.route('/github', methods=['POST'])
 def github_webhook():
-    # Correction erreur 415 : lit le JSON même si le header est mal configuré
     data = request.get_json(silent=True)
     if not data and request.form.get('payload'):
         data = json.loads(request.form.get('payload'))
     
     if data and 'commits' in data:
         repo_name = data['repository']['name']
+        branch = data.get('ref', '').split('/')[-1]
+        
         for commit in data['commits']:
             author = commit['author']['name']
             message = commit['message']
             url = commit['url']
-            bot.loop.create_task(send_github_update(author, message, url, repo_name))
+            added = len(commit.get('added', []))
+            removed = len(commit.get('removed', []))
+            modified = len(commit.get('modified', []))
+            
+            bot.loop.create_task(send_github_update(author, message, url, repo_name, branch, added, removed, modified))
     return "OK", 200
 
 def run(): app.run(host='0.0.0.0', port=8080)
@@ -32,7 +36,6 @@ def keep_alive():
     t = Thread(target=run)
     t.start()
 
-# --- CONFIGURATION (TES IDS) ---
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = 1461846612367380707
 LOG_RECRU_ID = 1462047465090973698
@@ -44,13 +47,12 @@ GITHUB_CHAN_NAME = "🤖〡changement-bot"
 stats = {"accept": 0, "refuse": 0, "waiting": 0}
 last_actions = {}
 
-# --- VUES (BOUTONS) ---
 class RecruitmentView(discord.ui.View):
     def __init__(self, bot):
         super().__init__(timeout=None)
         self.bot = bot
 
-    @discord.ui.button(label="⭐ Postuler maintenant ⭐", style=discord.ButtonStyle.success, custom_id="kawail_v12")
+    @discord.ui.button(label="⭐ Postuler maintenant ⭐", style=discord.ButtonStyle.success, custom_id="kawail_final_v16")
     async def apply(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(CandidatureModal(self.bot))
 
@@ -60,7 +62,7 @@ class AdminView(discord.ui.View):
         self.bot = bot
         self.user_id = user_id
 
-    @discord.ui.button(label="ACCEPTER", style=discord.ButtonStyle.success, custom_id="adm_ok_v12")
+    @discord.ui.button(label="ACCEPTER", style=discord.ButtonStyle.success, custom_id="adm_ok_v16")
     async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not any(role.id == FOUNDER_ROLE_ID for role in interaction.user.roles):
             return await interaction.response.send_message("❌ Réservé au Fondateur.", ephemeral=True)
@@ -73,7 +75,7 @@ class AdminView(discord.ui.View):
         except: pass
         await interaction.response.edit_message(content=f"✅ Admis par {interaction.user.name}", view=None)
 
-    @discord.ui.button(label="REFUSER", style=discord.ButtonStyle.danger, custom_id="adm_no_v12")
+    @discord.ui.button(label="REFUSER", style=discord.ButtonStyle.danger, custom_id="adm_no_v16")
     async def refuse(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not any(role.id == FOUNDER_ROLE_ID for role in interaction.user.roles):
             return await interaction.response.send_message("❌ Réservé au Fondateur.", ephemeral=True)
@@ -86,7 +88,6 @@ class AdminView(discord.ui.View):
         except: pass
         await interaction.response.edit_message(content=f"❌ Refusé par {interaction.user.name}", view=None)
 
-# --- FORMULAIRE ---
 class CandidatureModal(discord.ui.Modal, title="Dossier Staff Kawail_FPS"):
     pseudo = discord.ui.TextInput(label="Pseudo & Âge", placeholder="Ton nom, ton âge")
     dispo = discord.ui.TextInput(label="Disponibilités", placeholder="Ex: Lundi au Vendredi")
@@ -106,16 +107,13 @@ class CandidatureModal(discord.ui.Modal, title="Dossier Staff Kawail_FPS"):
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         embed.add_field(name="👤 Candidat", value=interaction.user.mention)
         embed.add_field(name="🎮 Pseudo/Âge", value=self.pseudo.value)
-        embed.add_field(name="⏰ Dispos", value=self.dispo.value)
-        embed.add_field(name="📚 Expériences", value=self.exp.value, inline=False)
-        embed.add_field(name="💡 Apport", value=self.apport.value, inline=False)
-        embed.add_field(name="❤️ Motivations", value=self.motive.value, inline=False)
+        embed.add_field(name="❤️ Motivations", value=self.motive.value[:1024], inline=False)
         await log_chan.send(embed=embed, view=AdminView(self.bot, interaction.user.id))
         await interaction.response.send_message("✅ Ton dossier a été envoyé !", ephemeral=True)
 
-# --- SYSTÈME GITHUB ---
-async def send_github_update(author, message, url, repo):
+async def send_github_update(author, message, url, repo, branch, added, removed, modified):
     guild = bot.get_guild(GUILD_ID)
+    if not guild: return
     category = guild.get_channel(CAT_INFO_ID)
     channel = discord.utils.get(guild.channels, name=GITHUB_CHAN_NAME)
     
@@ -123,15 +121,25 @@ async def send_github_update(author, message, url, repo):
         channel = await guild.create_text_channel(GITHUB_CHAN_NAME, category=category)
     
     embed = discord.Embed(
-        title=f"🛠️ GitHub Update : {repo}", 
-        description=f"**Auteur:** {author}\n**Message:** {message}", 
-        color=0x2b2d31, 
-        url=url
+        title="🚀 Nouveau Push détecté !",
+        description=f"Le code du bot a été mis à jour.\n\n**📝 Message :**\n```fix\n{message}```",
+        color=0x2ecc71,
+        url=url,
+        timestamp=discord.utils.utcnow()
     )
-    embed.set_footer(text="Webhook Kawail_FPS")
+    embed.add_field(name="📂 Dépôt", value=f"`{repo}`", inline=True)
+    embed.add_field(name="🌿 Branche", value=f"`{branch}`", inline=True)
+    embed.add_field(name="👤 Auteur", value=f"`{author}`", inline=True)
+    
+    stats_text = f"🟢 `{added}` ajoutés | 🟠 `{modified}` modifiés | 🔴 `{removed}` supprimés"
+    embed.add_field(name="📊 Statistiques fichiers", value=stats_text, inline=False)
+    
+    embed.set_author(name="GitHub Webhook", icon_url="https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png")
+    embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/25/25231.png")
+    embed.set_footer(text="Kawail_FPS • Système de déploiement")
+    
     await channel.send(embed=embed)
 
-# --- BOT MAIN ---
 class MyBot(discord.Client):
     def __init__(self):
         super().__init__(intents=discord.Intents.all())
@@ -144,6 +152,7 @@ class MyBot(discord.Client):
         await self.tree.sync(guild=guild)
 
     async def on_ready(self):
+        await self.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="Kawail_FPS 🛠️"))
         print(f"✅ Bot Kawail_FPS en ligne !")
         chan = self.get_channel(RECRUT_CHANNEL_ID)
         if chan:
@@ -175,19 +184,6 @@ async def list_stats(interaction: discord.Interaction):
     if not any(role.id == FOUNDER_ROLE_ID for role in interaction.user.roles):
         return await interaction.response.send_message("❌ Réservé au Fondateur.", ephemeral=True)
     await interaction.response.send_message(f"📊 **Stats :**\n⏳ Attente : `{stats['waiting']}`\n✅ Acceptés : `{stats['accept']}`\n❌ Refusés : `{stats['refuse']}`")
-
-@bot.tree.command(name="annuler", description="Annule le dernier choix")
-async def annuler(interaction: discord.Interaction, membre: discord.Member):
-    global stats
-    if not any(role.id == FOUNDER_ROLE_ID for role in interaction.user.roles):
-        return await interaction.response.send_message("❌ Réservé au Fondateur.", ephemeral=True)
-    action = last_actions.get(membre.id)
-    if not action: return await interaction.response.send_message("Aucune action trouvée.", ephemeral=True)
-    if action == "accept": stats["accept"] -= 1
-    else: stats["refuse"] -= 1
-    stats["waiting"] += 1
-    del last_actions[membre.id]
-    await interaction.response.send_message(f"🔄 Action annulée pour {membre.name}.")
 
 keep_alive()
 bot.run(TOKEN)
