@@ -1,6 +1,6 @@
 import discord
 from discord import app_commands
-import os, json, asyncio, datetime, random
+import os, json, asyncio, datetime, random, re
 from flask import Flask, request
 from threading import Thread
 
@@ -11,7 +11,10 @@ def home(): return "Bot en ligne !"
 
 @app.route('/github', methods=['POST'])
 def github_webhook():
-    data = request.get_json(silent=True) or (json.loads(request.form.get('payload')) if request.form.get('payload') else None)
+    if not bot.is_ready():
+        return "Bot non prêt", 503
+    
+    data = request.get_json(silent=True)
     if data and 'commits' in data:
         repo_name = data['repository']['name']
         branch = data.get('ref', '').split('/')[-1]
@@ -19,8 +22,8 @@ def github_webhook():
         num_commits = len(data['commits'])
         last_msg = data['commits'][-1]['message']
         url = data['compare']
-        if not bot.is_closed() and bot.is_ready():
-            bot.loop.create_task(send_github_update(author, f"{num_commits} commit(s) : {last_msg}", url, repo_name, branch))
+        
+        bot.loop.create_task(send_github_update(author, f"{num_commits} commit(s) : {last_msg}", url, repo_name, branch))
     return "OK", 200
 
 def run(): app.run(host='0.0.0.0', port=8080)
@@ -34,6 +37,14 @@ FOUNDER_ROLE_ID = 1461848068780458237
 CAT_INFO_ID = 1461849328237809774 
 GITHUB_CHAN_NAME = "🤖〡changement-bot"
 BANNED_WORDS = ["insulte1", "insulte2", "fdp"]
+
+def parse_duration(duration_str):
+    units = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400, 'w': 604800, 'mo': 2592000}
+    match = re.match(r"(\d+)(s|m|h|d|w|mo)", duration_str.lower())
+    if match:
+        amount, unit = match.groups()
+        return int(amount) * units[unit]
+    return None
 
 class GiveawayView(discord.ui.View):
     def __init__(self):
@@ -175,19 +186,30 @@ async def ban(interaction: discord.Interaction, membre: discord.Member, raison: 
 
 @bot.tree.command(name="timeout")
 @app_commands.checks.has_permissions(moderate_members=True)
-async def timeout(interaction: discord.Interaction, membre: discord.Member, minutes: int, raison: str = "Aucune"):
-    duration = datetime.timedelta(minutes=minutes)
+async def timeout(interaction: discord.Interaction, membre: discord.Member, duree: str, raison: str = "Aucune"):
+    seconds = parse_duration(duree)
+    if not seconds:
+        return await interaction.response.send_message("❌ Format invalide (Ex: 10m, 1h, 1d)", ephemeral=True)
+    duration = datetime.timedelta(seconds=seconds)
     await membre.timeout(duration, reason=raison)
-    await interaction.response.send_message(f"⏳ **{membre.name}** est en sourdine pour {minutes} min.")
+    await interaction.response.send_message(f"⏳ **{membre.name}** est en sourdine pour {duree}.")
 
 @bot.tree.command(name="giveaway")
 @app_commands.checks.has_permissions(manage_messages=True)
-async def giveaway(interaction: discord.Interaction, lot: str, secondes: int):
+async def giveaway(interaction: discord.Interaction, lot: str, duree: str):
+    seconds = parse_duration(duree)
+    if not seconds:
+        return await interaction.response.send_message("❌ Format: `10m`, `1h`, `1d`, `1w`, `1mo`", ephemeral=True)
+    
+    end_time = int(datetime.datetime.now().timestamp() + seconds)
     view = GiveawayView()
-    embed = discord.Embed(title="🎉 GIVEAWAY 🎉", description=f"Lot : **{lot}**\nFinit dans : <t:{int(datetime.datetime.now().timestamp() + secondes)}:R>", color=0x00FFFF)
+    embed = discord.Embed(title="🎉 GIVEAWAY 🎉", description=f"Lot : **{lot}**\nFinit : <t:{end_time}:R>", color=0x00FFFF)
     await interaction.response.send_message(embed=embed, view=view)
-    await asyncio.sleep(secondes)
-    if not view.participants: return await interaction.followup.send(f"😭 Personne n'a participé.")
+    
+    await asyncio.sleep(seconds)
+    if not view.participants:
+        return await interaction.followup.send(f"😭 Personne n'a participé pour **{lot}**.")
+    
     gagnant = await bot.fetch_user(random.choice(view.participants))
     await interaction.followup.send(f"🎊 Félicitations {gagnant.mention}, tu as gagné **{lot}** !")
 
