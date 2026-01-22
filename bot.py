@@ -19,7 +19,8 @@ def github_webhook():
         num_commits = len(data['commits'])
         last_msg = data['commits'][-1]['message']
         url = data['compare']
-        bot.loop.create_task(send_github_update(author, f"{num_commits} commit(s) : {last_msg}", url, repo_name, branch))
+        if not bot.is_closed() and bot.is_ready():
+            bot.loop.create_task(send_github_update(author, f"{num_commits} commit(s) : {last_msg}", url, repo_name, branch))
     return "OK", 200
 
 def run(): app.run(host='0.0.0.0', port=8080)
@@ -32,7 +33,7 @@ RECRUT_CHANNEL_ID = 1461851553001504809
 FOUNDER_ROLE_ID = 1461848068780458237
 CAT_INFO_ID = 1461849328237809774 
 GITHUB_CHAN_NAME = "🤖〡changement-bot"
-BANNED_WORDS = ["va baiser ta mere", "ntm", "fdp", "vbztm"]
+BANNED_WORDS = ["vbztm", "ntm", "fdp"]
 
 class GiveawayView(discord.ui.View):
     def __init__(self):
@@ -51,7 +52,7 @@ class RecruitmentView(discord.ui.View):
         super().__init__(timeout=None)
         self.bot = bot
 
-    @discord.ui.button(label="⭐ Postuler maintenant ⭐", style=discord.ButtonStyle.success, custom_id="kawail_v23")
+    @discord.ui.button(label="⭐ Postuler maintenant ⭐", style=discord.ButtonStyle.success, custom_id="kawail_v24")
     async def apply(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(CandidatureModal(self.bot))
 
@@ -61,7 +62,7 @@ class AdminView(discord.ui.View):
         self.bot = bot
         self.user_id = user_id
 
-    @discord.ui.button(label="ACCEPTER", style=discord.ButtonStyle.success, custom_id="adm_ok_v23")
+    @discord.ui.button(label="ACCEPTER", style=discord.ButtonStyle.success, custom_id="adm_ok_v24")
     async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not any(role.id == FOUNDER_ROLE_ID for role in interaction.user.roles):
             return await interaction.response.send_message("❌ Réservé au Fondateur.", ephemeral=True)
@@ -70,7 +71,7 @@ class AdminView(discord.ui.View):
         except: pass
         await interaction.response.edit_message(content=f"✅ Admis par {interaction.user.name}", view=None)
 
-    @discord.ui.button(label="REFUSER", style=discord.ButtonStyle.danger, custom_id="adm_no_v23")
+    @discord.ui.button(label="REFUSER", style=discord.ButtonStyle.danger, custom_id="adm_no_v24")
     async def refuse(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not any(role.id == FOUNDER_ROLE_ID for role in interaction.user.roles):
             return await interaction.response.send_message("❌ Réservé au Fondateur.", ephemeral=True)
