@@ -15,8 +15,11 @@ def github_webhook():
     if data and 'commits' in data:
         repo_name = data['repository']['name']
         branch = data.get('ref', '').split('/')[-1]
-        for commit in data['commits']:
-            bot.loop.create_task(send_github_update(commit['author']['name'], commit['message'], commit['url'], repo_name, branch, len(commit.get('added', [])), len(commit.get('removed', [])), len(commit.get('modified', []))))
+        author = data['pusher']['name']
+        num_commits = len(data['commits'])
+        last_msg = data['commits'][-1]['message']
+        url = data['compare']
+        bot.loop.create_task(send_github_update(author, f"{num_commits} commit(s) : {last_msg}", url, repo_name, branch))
     return "OK", 200
 
 def run(): app.run(host='0.0.0.0', port=8080)
@@ -29,7 +32,7 @@ RECRUT_CHANNEL_ID = 1461851553001504809
 FOUNDER_ROLE_ID = 1461848068780458237
 CAT_INFO_ID = 1461849328237809774 
 GITHUB_CHAN_NAME = "🤖〡changement-bot"
-BANNED_WORDS = ["insulte1", "insulte2", "fdp"]
+BANNED_WORDS = ["va baiser ta mere", "ntm", "fdp", "vbztm"]
 
 class GiveawayView(discord.ui.View):
     def __init__(self):
@@ -48,7 +51,7 @@ class RecruitmentView(discord.ui.View):
         super().__init__(timeout=None)
         self.bot = bot
 
-    @discord.ui.button(label="⭐ Postuler maintenant ⭐", style=discord.ButtonStyle.success, custom_id="kawail_v21")
+    @discord.ui.button(label="⭐ Postuler maintenant ⭐", style=discord.ButtonStyle.success, custom_id="kawail_v23")
     async def apply(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(CandidatureModal(self.bot))
 
@@ -58,7 +61,7 @@ class AdminView(discord.ui.View):
         self.bot = bot
         self.user_id = user_id
 
-    @discord.ui.button(label="ACCEPTER", style=discord.ButtonStyle.success, custom_id="adm_ok_v21")
+    @discord.ui.button(label="ACCEPTER", style=discord.ButtonStyle.success, custom_id="adm_ok_v23")
     async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not any(role.id == FOUNDER_ROLE_ID for role in interaction.user.roles):
             return await interaction.response.send_message("❌ Réservé au Fondateur.", ephemeral=True)
@@ -67,7 +70,7 @@ class AdminView(discord.ui.View):
         except: pass
         await interaction.response.edit_message(content=f"✅ Admis par {interaction.user.name}", view=None)
 
-    @discord.ui.button(label="REFUSER", style=discord.ButtonStyle.danger, custom_id="adm_no_v21")
+    @discord.ui.button(label="REFUSER", style=discord.ButtonStyle.danger, custom_id="adm_no_v23")
     async def refuse(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not any(role.id == FOUNDER_ROLE_ID for role in interaction.user.roles):
             return await interaction.response.send_message("❌ Réservé au Fondateur.", ephemeral=True)
@@ -97,15 +100,15 @@ class CandidatureModal(discord.ui.Modal, title="Dossier Staff Kawail_FPS"):
         await log_chan.send(embed=embed, view=AdminView(self.bot, interaction.user.id))
         await interaction.response.send_message("✅ Ton dossier a été envoyé !", ephemeral=True)
 
-async def send_github_update(author, message, url, repo, branch, added, removed, modified):
+async def send_github_update(author, message, url, repo, branch):
     guild = bot.get_guild(GUILD_ID)
     if not guild: return
     channel = discord.utils.get(guild.channels, name=GITHUB_CHAN_NAME)
     if not channel: channel = await guild.create_text_channel(GITHUB_CHAN_NAME, category=guild.get_channel(CAT_INFO_ID))
-    embed = discord.Embed(title="🚀 Nouveau Push !", description=f"```fix\n{message}```", color=0x2ecc71, url=url, timestamp=discord.utils.utcnow())
+    embed = discord.Embed(title="🚀 Mise à jour du code", description=f"```fix\n{message}```", color=0x2ecc71, url=url, timestamp=discord.utils.utcnow())
     embed.add_field(name="🌿 Branche", value=f"`{branch}`", inline=True)
-    embed.add_field(name="📊 Fichiers", value=f"🟢 {added} | 🟠 {modified} | 🔴 {removed}", inline=True)
-    embed.set_author(name=f"Auteur: {author}")
+    embed.add_field(name="📂 Dépôt", value=f"`{repo}`", inline=True)
+    embed.set_author(name=f"Pushé par : {author}")
     await channel.send(embed=embed)
 
 class MyBot(discord.Client):
