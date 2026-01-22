@@ -1,40 +1,26 @@
 import discord
 from discord import app_commands
-import os
-import json
+import os, json, asyncio, datetime, random
 from flask import Flask, request
 from threading import Thread
 
 app = Flask('')
 
 @app.route('/')
-def home(): return "Bot Kawail_FPS en ligne !"
+def home(): return "Bot en ligne !"
 
 @app.route('/github', methods=['POST'])
 def github_webhook():
-    data = request.get_json(silent=True)
-    if not data and request.form.get('payload'):
-        data = json.loads(request.form.get('payload'))
-    
+    data = request.get_json(silent=True) or (json.loads(request.form.get('payload')) if request.form.get('payload') else None)
     if data and 'commits' in data:
         repo_name = data['repository']['name']
         branch = data.get('ref', '').split('/')[-1]
-        
         for commit in data['commits']:
-            author = commit['author']['name']
-            message = commit['message']
-            url = commit['url']
-            added = len(commit.get('added', []))
-            removed = len(commit.get('removed', []))
-            modified = len(commit.get('modified', []))
-            
-            bot.loop.create_task(send_github_update(author, message, url, repo_name, branch, added, removed, modified))
+            bot.loop.create_task(send_github_update(commit['author']['name'], commit['message'], commit['url'], repo_name, branch, len(commit.get('added', [])), len(commit.get('removed', [])), len(commit.get('modified', []))))
     return "OK", 200
 
 def run(): app.run(host='0.0.0.0', port=8080)
-def keep_alive():
-    t = Thread(target=run)
-    t.start()
+def keep_alive(): Thread(target=run).start()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = 1461846612367380707
@@ -43,16 +29,26 @@ RECRUT_CHANNEL_ID = 1461851553001504809
 FOUNDER_ROLE_ID = 1461848068780458237
 CAT_INFO_ID = 1461849328237809774 
 GITHUB_CHAN_NAME = "🤖〡changement-bot"
+BANNED_WORDS = ["insulte1", "insulte2", "fdp"]
 
-stats = {"accept": 0, "refuse": 0, "waiting": 0}
-last_actions = {}
+class GiveawayView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.participants = []
+
+    @discord.ui.button(label="🎉 Participer", style=discord.ButtonStyle.blurple, custom_id="join_giveaway")
+    async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id in self.participants:
+            return await interaction.response.send_message("Tu es déjà inscrit !", ephemeral=True)
+        self.participants.append(interaction.user.id)
+        await interaction.response.send_message("✅ Inscription validée !", ephemeral=True)
 
 class RecruitmentView(discord.ui.View):
     def __init__(self, bot):
         super().__init__(timeout=None)
         self.bot = bot
 
-    @discord.ui.button(label="⭐ Postuler maintenant ⭐", style=discord.ButtonStyle.success, custom_id="kawail_final_v16")
+    @discord.ui.button(label="⭐ Postuler maintenant ⭐", style=discord.ButtonStyle.success, custom_id="kawail_v21")
     async def apply(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(CandidatureModal(self.bot))
 
@@ -62,27 +58,19 @@ class AdminView(discord.ui.View):
         self.bot = bot
         self.user_id = user_id
 
-    @discord.ui.button(label="ACCEPTER", style=discord.ButtonStyle.success, custom_id="adm_ok_v16")
+    @discord.ui.button(label="ACCEPTER", style=discord.ButtonStyle.success, custom_id="adm_ok_v21")
     async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not any(role.id == FOUNDER_ROLE_ID for role in interaction.user.roles):
             return await interaction.response.send_message("❌ Réservé au Fondateur.", ephemeral=True)
-        global stats
-        stats["accept"] += 1
-        stats["waiting"] -= 1
-        last_actions[self.user_id] = "accept"
         user = await self.bot.fetch_user(self.user_id)
         try: await user.send("✅ Ta candidature a été **acceptée** sur **Kawail_FPS** !")
         except: pass
         await interaction.response.edit_message(content=f"✅ Admis par {interaction.user.name}", view=None)
 
-    @discord.ui.button(label="REFUSER", style=discord.ButtonStyle.danger, custom_id="adm_no_v16")
+    @discord.ui.button(label="REFUSER", style=discord.ButtonStyle.danger, custom_id="adm_no_v21")
     async def refuse(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not any(role.id == FOUNDER_ROLE_ID for role in interaction.user.roles):
             return await interaction.response.send_message("❌ Réservé au Fondateur.", ephemeral=True)
-        global stats
-        stats["refuse"] += 1
-        stats["waiting"] -= 1
-        last_actions[self.user_id] = "refuse"
         user = await self.bot.fetch_user(self.user_id)
         try: await user.send("❌ Ta candidature sur **Kawail_FPS** a été refusée.")
         except: pass
@@ -100,8 +88,6 @@ class CandidatureModal(discord.ui.Modal, title="Dossier Staff Kawail_FPS"):
         self.bot = bot
 
     async def on_submit(self, interaction: discord.Interaction):
-        global stats
-        stats["waiting"] += 1
         log_chan = self.bot.get_channel(LOG_RECRU_ID)
         embed = discord.Embed(title="📥 NOUVELLE CANDIDATURE", color=0xF1C40F)
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
@@ -114,30 +100,12 @@ class CandidatureModal(discord.ui.Modal, title="Dossier Staff Kawail_FPS"):
 async def send_github_update(author, message, url, repo, branch, added, removed, modified):
     guild = bot.get_guild(GUILD_ID)
     if not guild: return
-    category = guild.get_channel(CAT_INFO_ID)
     channel = discord.utils.get(guild.channels, name=GITHUB_CHAN_NAME)
-    
-    if not channel:
-        channel = await guild.create_text_channel(GITHUB_CHAN_NAME, category=category)
-    
-    embed = discord.Embed(
-        title="🚀 Nouveau Push détecté !",
-        description=f"Le code du bot a été mis à jour.\n\n**📝 Message :**\n```fix\n{message}```",
-        color=0x2ecc71,
-        url=url,
-        timestamp=discord.utils.utcnow()
-    )
-    embed.add_field(name="📂 Dépôt", value=f"`{repo}`", inline=True)
+    if not channel: channel = await guild.create_text_channel(GITHUB_CHAN_NAME, category=guild.get_channel(CAT_INFO_ID))
+    embed = discord.Embed(title="🚀 Nouveau Push !", description=f"```fix\n{message}```", color=0x2ecc71, url=url, timestamp=discord.utils.utcnow())
     embed.add_field(name="🌿 Branche", value=f"`{branch}`", inline=True)
-    embed.add_field(name="👤 Auteur", value=f"`{author}`", inline=True)
-    
-    stats_text = f"🟢 `{added}` ajoutés | 🟠 `{modified}` modifiés | 🔴 `{removed}` supprimés"
-    embed.add_field(name="📊 Statistiques fichiers", value=stats_text, inline=False)
-    
-    embed.set_author(name="GitHub Webhook", icon_url="https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png")
-    embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/25/25231.png")
-    embed.set_footer(text="Kawail_FPS • Système de déploiement")
-    
+    embed.add_field(name="📊 Fichiers", value=f"🟢 {added} | 🟠 {modified} | 🔴 {removed}", inline=True)
+    embed.set_author(name=f"Auteur: {author}")
     await channel.send(embed=embed)
 
 class MyBot(discord.Client):
@@ -147,18 +115,17 @@ class MyBot(discord.Client):
 
     async def setup_hook(self):
         self.add_view(RecruitmentView(self))
+        self.add_view(GiveawayView())
         guild = discord.Object(id=GUILD_ID)
         self.tree.copy_global_to(guild=guild)
         await self.tree.sync(guild=guild)
 
     async def on_ready(self):
         await self.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="Kawail_FPS 🛠️"))
-        print(f"✅ Bot Kawail_FPS en ligne !")
         chan = self.get_channel(RECRUT_CHANNEL_ID)
         if chan:
             async for m in chan.history(limit=5):
                 if m.author.id == self.user.id: return
-            
             embed = discord.Embed(
                 title="━━━ 🌟 RECRUTEMENT : KAWAIL_FPS 🌟 ━━━",
                 description=(
@@ -177,13 +144,48 @@ class MyBot(discord.Client):
             )
             await chan.send(embed=embed, view=RecruitmentView(self))
 
+    async def on_message(self, message):
+        if message.author.bot: return
+        is_staff = any(role.id == FOUNDER_ROLE_ID for role in message.author.roles)
+        if not is_staff:
+            if "http://" in message.content or "https://" in message.content or "discord.gg/" in message.content:
+                await message.delete()
+                return await message.channel.send(f"⚠️ {message.author.mention}, les liens sont interdits !", delete_after=3)
+            if any(word in message.content.lower() for word in BANNED_WORDS):
+                await message.delete()
+                return await message.channel.send(f"⚠️ {message.author.mention}, surveille ton langage !", delete_after=3)
+
 bot = MyBot()
 
-@bot.tree.command(name="list", description="Stats recrutement")
-async def list_stats(interaction: discord.Interaction):
-    if not any(role.id == FOUNDER_ROLE_ID for role in interaction.user.roles):
-        return await interaction.response.send_message("❌ Réservé au Fondateur.", ephemeral=True)
-    await interaction.response.send_message(f"📊 **Stats :**\n⏳ Attente : `{stats['waiting']}`\n✅ Acceptés : `{stats['accept']}`\n❌ Refusés : `{stats['refuse']}`")
+@bot.tree.command(name="kick")
+@app_commands.checks.has_permissions(kick_members=True)
+async def kick(interaction: discord.Interaction, membre: discord.Member, raison: str = "Aucune"):
+    await membre.kick(reason=raison)
+    await interaction.response.send_message(f"👞 **{membre.name}** a été expulsé.")
+
+@bot.tree.command(name="ban")
+@app_commands.checks.has_permissions(ban_members=True)
+async def ban(interaction: discord.Interaction, membre: discord.Member, raison: str = "Aucune"):
+    await membre.ban(reason=raison)
+    await interaction.response.send_message(f"🔨 **{membre.name}** a été banni.")
+
+@bot.tree.command(name="timeout")
+@app_commands.checks.has_permissions(moderate_members=True)
+async def timeout(interaction: discord.Interaction, membre: discord.Member, minutes: int, raison: str = "Aucune"):
+    duration = datetime.timedelta(minutes=minutes)
+    await membre.timeout(duration, reason=raison)
+    await interaction.response.send_message(f"⏳ **{membre.name}** est en sourdine pour {minutes} min.")
+
+@bot.tree.command(name="giveaway")
+@app_commands.checks.has_permissions(manage_messages=True)
+async def giveaway(interaction: discord.Interaction, lot: str, secondes: int):
+    view = GiveawayView()
+    embed = discord.Embed(title="🎉 GIVEAWAY 🎉", description=f"Lot : **{lot}**\nFinit dans : <t:{int(datetime.datetime.now().timestamp() + secondes)}:R>", color=0x00FFFF)
+    await interaction.response.send_message(embed=embed, view=view)
+    await asyncio.sleep(secondes)
+    if not view.participants: return await interaction.followup.send(f"😭 Personne n'a participé.")
+    gagnant = await bot.fetch_user(random.choice(view.participants))
+    await interaction.followup.send(f"🎊 Félicitations {gagnant.mention}, tu as gagné **{lot}** !")
 
 keep_alive()
 bot.run(TOKEN)
